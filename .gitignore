@@ -1,7 +1,14 @@
 .DS_Store
 node_modules/
+dist/
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 .env
 .env.local
-.psee/worktrees/
+.env.*.local
+.psee/
+logs/
+*.log
+

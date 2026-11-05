@@ -1,0 +1,38 @@
+{
+  "system": {
+    "name": "PSEE",
+    "version": "0.1.0",
+    "environment": "development",
+    "worktreeRoot": ".psee/worktrees",
+    "dbPath": ".psee/psee_state.sqlite"
+  },
+  "providers": {
+    "ollama": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:11434",
+      "defaultModel": "qwen2.5-coder:7b",
+      "priority": 0
+    },
+    "nineRouter": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:20128",
+      "priority": 1,
+      "defaultModels": {
+        "planning": "ag/gemini-3.8-flash-low",
+        "coding": "gh/gpt-4.1",
+        "review": "cx/gpt-5.6-luna-review"
+      }
+    },
+    "openCode": {
+      "enabled": true,
+      "binaryPath": "opencode",
+      "defaultModel": "9router/ag/gemini-3.8-flash-low"
+    }
+  },
+  "policy": {
+    "defaultTier": "free-first",
+    "allowPaidFallback": false,
+    "requireHumanApprovalForMerge": true,
+    "requireHumanApprovalForTerminal": true
+  }
+}

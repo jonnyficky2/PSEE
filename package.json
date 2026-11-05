@@ -1,0 +1,37 @@
+{
+  "name": "psee",
+  "version": "0.1.0",
+  "description": "Personal System Execution Environment - Free-First Multi-Agent Orchestration Architecture",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "spike:adapters": "tsx src/scripts/verify-adapters.ts",
+    "test": "tsx --test test/system.test.ts"
+  },
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "free-first",
+    "ollama",
+    "9router",
+    "opencode",
+    "git-worktree"
+  ],
+  "author": "jofi",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
