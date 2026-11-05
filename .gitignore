@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+*.sqlite
+*.sqlite3
+.env
+.env.local
+.psee/worktrees/
