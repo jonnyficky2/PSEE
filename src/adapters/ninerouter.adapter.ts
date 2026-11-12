@@ -123,8 +123,11 @@ export class NineRouterGatewayAdapter implements ModelAdapter {
       };
 
       const choice = json.choices?.[0];
-      const content = choice?.message?.content || '';
-      const finishReason = (choice?.finish_reason as 'stop' | 'length') || 'stop';
+      if (typeof choice?.message?.content !== 'string') {
+        throw new Error('Malformed 9Router response: missing choices[0].message.content');
+      }
+      const content = choice.message.content;
+      const finishReason = (choice.finish_reason as 'stop' | 'length') || 'stop';
 
       return {
         requestId: request.requestId,
