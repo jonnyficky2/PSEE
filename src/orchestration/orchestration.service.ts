@@ -17,6 +17,7 @@ export interface OrchestrationRequest {
   timeoutMs?: number;
   worktreePath?: string;
   idempotencyKey?: string;
+  correlationId?: string;
 }
 
 export interface OrchestrationResult {
@@ -46,7 +47,7 @@ export class OrchestrationService {
       const existing = this.idempotentResults.get(request.idempotencyKey);
       if (existing) return existing;
     }
-    const correlationId = `corr-${request.taskId}-${Date.now()}`;
+    const correlationId = request.correlationId ?? `corr-${request.taskId}-${Date.now()}`;
     const executionId = `execution-${request.taskId}-${Date.now()}`;
     this.deps.persistence.createTask({
       id: request.taskId, title: request.title, status: 'QUEUED', priority: 0,

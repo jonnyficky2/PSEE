@@ -19,19 +19,30 @@ export function createRuntimeConfig(env: RuntimeEnvironment = process.env): Runt
 
 export interface PseeRuntime { config: RuntimeConfig; server: Server; database: PseeDatabase; close(): Promise<void>; }
 
-export function createPseeRuntime(env: RuntimeEnvironment = process.env): PseeRuntime {
+export interface RuntimeOverrides {
+  adapter?: import('../types/index.js').AgentAdapter;
+  worktree?: (taskId: string) => Promise<{ worktreePath: string; branchName: string; baseSha: string }>;
+}
+
+export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrides: RuntimeOverrides = {}): PseeRuntime {
   const config = createRuntimeConfig(env);
   const database = new PseeDatabase({ dbPath: config.dbPath });
   const persistence = new ExecutionPersistenceService(database);
+  database.rawDb.prepare(`INSERT OR IGNORE INTO agent_definitions (id, agent_key, display_name, role_description, default_task_class, permission_profile) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('opencode', 'opencode', 'OpenCode', 'Production OpenCode bridge', 'implementation', 'standard');
+  database.rawDb.prepare(`INSERT OR IGNORE INTO ai_providers (id, provider_key, display_name, provider_type, status) VALUES (?, ?, ?, ?, ?)`)
+    .run('ollama', 'ollama', 'Ollama', 'local', 'ACTIVE');
+  database.rawDb.prepare(`INSERT OR IGNORE INTO ai_models (id, provider_id, model_key, display_name, status, source) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('runtime-local', 'ollama', 'runtime-local', 'Runtime local model', 'QUALIFIED', 'verified');
   const policy = new FreeFirstPolicyEngine();
   const worktrees = new GitWorktreeManager();
   const checkpoints = new CheckpointEngine(database);
-  const adapter = new OpenCodeBridgeAdapter({ binaryPath: env.PSEE_OPENCODE_BIN });
+  const adapter = overrides.adapter ?? new OpenCodeBridgeAdapter({ binaryPath: env.PSEE_OPENCODE_BIN });
   const service = new OrchestrationService({
     persistence,
     adapter,
     selectRoute: (request) => policy.selectRoute({ ...request, allowPaid: false }),
-    createWorktree: (taskId) => worktrees.createWorktree(taskId),
+    createWorktree: overrides.worktree ?? ((taskId) => worktrees.createWorktree(taskId)),
     saveCheckpoint: (data) => checkpoints.saveCheckpoint(data),
   });
   const server = createOrchestrationHttpServer(adaptOrchestrationService(service));
