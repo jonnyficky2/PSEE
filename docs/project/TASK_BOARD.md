@@ -32,6 +32,17 @@ This board records implementation evidence only. Architecture documents, includi
 
 ## Priority Backlog
 
+### [TASK-0013] PSEE frontend application
+
+- **Description:** Build a browser-native TypeScript dashboard for overview, task submission, and task monitoring using the approved API contract.
+- **Priority:** High
+- **Status:** DONE
+- **Dependencies:** TASK-0009, TASK-0010, TASK-0011, TASK-0012
+- **Acceptance Criteria:** Frontend files exist under `frontend/`; API calls are isolated in `src/api-client.ts`; the three requested interfaces, loading/empty/error/success states, responsive accessible styling, and frontend compilation are implemented.
+- **Progress:** 100%
+- **Related Docs:** `frontend/index.html`, `frontend/styles.css`, `frontend/src/app.ts`, `frontend/src/api-client.ts`, `frontend/src/types.ts`, `tsconfig.frontend.json`
+- **Notes:** Uses browser-native DOM and Fetch APIs with no new dependencies. `npm run build` compiles backend and frontend. No backend files were restructured or behavior changed.
+
 ### [TASK-0001] Add automated adapter contract coverage
 
 - **Description:** Test Ollama and 9Router HTTP health/model-discovery/inference normalization, plus OpenCode availability, execution success, timeout, and abort behavior using deterministic local mocks. Keep tests at the adapter boundary; do not require live providers or the `opencode` binary.
