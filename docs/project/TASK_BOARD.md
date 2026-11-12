@@ -48,6 +48,17 @@ This board records implementation evidence only. Architecture documents, includi
 - **Related Docs:** `src/adapters/ollama.adapter.ts`, `src/adapters/ninerouter.adapter.ts`, `src/adapters/opencode.adapter.ts`, `src/types/index.ts`, `src/scripts/verify-adapters.ts`
 - **Notes:** Completed with deterministic adapter contract coverage in `test/adapters.test.ts`. Added minimal malformed-response validation to the Ollama and 9Router adapters because the new tests exposed silent acceptance of invalid provider responses. No live-provider verification or manual UAT is claimed.
 
+### [TASK-0011] Production runtime CLI entrypoint
+
+- **Description:** Connect the runtime bootstrap to `npm start` with environment configuration and graceful signal shutdown.
+- **Priority:** High
+- **Status:** DONE
+- **Dependencies:** TASK-0010
+- **Acceptance Criteria:** `npm start` uses `startPseeRuntime()`, SIGINT/SIGTERM close the runtime once, startup failures set non-zero exit status with sanitized errors, and CLI behavior is deterministically tested.
+- **Progress:** 100%
+- **Related Docs:** `src/runtime/cli.ts`, `test/cli.test.ts`, `package.json`
+- **Notes:** No dependency added. Credentials and sensitive configuration are not logged. The previous planned frontend/API integration numbering is preserved; TASK-0011 is the CLI entrypoint.
+
 ### [TASK-0010] Production HTTP server bootstrap and runtime configuration
 
 - **Description:** Initialize the database, policy, adapter, worktree, checkpoint, orchestration service, and HTTP server through a configurable runtime bootstrap.

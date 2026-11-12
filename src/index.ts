@@ -16,6 +16,7 @@ export * from './persistence/execution.persistence.js';
 export * from './orchestration/orchestration.service.js';
 export * from './api/http-server.js';
 export * from './runtime/bootstrap.js';
+export * from './runtime/cli.js';
 
 export const PSEE_VERSION = '0.1.0';
 export const PSEE_DESCRIPTION = 'Free-First Multi-Agent Orchestration Architecture';
