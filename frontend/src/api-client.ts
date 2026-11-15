@@ -1,11 +1,17 @@
 import type { CreateTaskRequest, ErrorResponse, TaskResponse } from './types.js';
 
+export function resolveApiBaseUrl(explicit?: string, configured?: string): string { return explicit ?? configured ?? '/api'; }
+
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly details: ErrorResponse, message = details.error.message) { super(message); }
 }
 
 export class PseeApiClient {
-  constructor(private readonly baseUrl = '/api') {}
+  constructor(baseUrl?: string) {
+    this.baseUrl = resolveApiBaseUrl(baseUrl, typeof document === 'undefined' ? undefined : document.querySelector<HTMLMetaElement>('meta[name="psee-api-base"]')?.content);
+  }
+
+  private readonly baseUrl: string;
 
   async submitTask(request: CreateTaskRequest, options: { correlationId?: string; idempotencyKey?: string } = {}): Promise<TaskResponse> {
     return this.request('/tasks', { method: 'POST', body: JSON.stringify(request), headers: this.headers(options) });

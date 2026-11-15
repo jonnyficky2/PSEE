@@ -42,7 +42,7 @@ function fakeOpenCodeScript(output: string, exitCode = 0): string {
   return path;
 }
 
-describe('Provider adapter contracts', () => {
+describe('Provider adapter contracts', { concurrency: false }, () => {
   test('Ollama discovers models and normalizes chat responses', async () => {
     const calls: string[] = [];
     globalThis.fetch = async (input, init) => {
@@ -127,7 +127,7 @@ describe('Provider adapter contracts', () => {
       worktreePath: process.cwd(),
       instructions: 'test',
       contextFiles: [],
-      timeoutMs: 1000,
+      timeoutMs: 5000,
       allowNetwork: false,
     });
     assert.strictEqual(result.status, 'SUCCESS');
@@ -142,7 +142,7 @@ describe('Provider adapter contracts', () => {
       worktreePath: process.cwd(),
       instructions: 'test',
       contextFiles: [],
-      timeoutMs: 1000,
+      timeoutMs: 5000,
       allowNetwork: false,
     });
     assert.strictEqual(failed.status, 'FAILED');

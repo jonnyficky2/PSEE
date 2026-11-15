@@ -2,8 +2,8 @@
 
 **Canonical path:** `docs/project/TASK_BOARD.md`  
 **Purpose:** Primary operational source for implementation backlog, dependencies, progress, verification, and agent handoff.  
-**Last reviewed:** 2026-11-12  
-**Repository state observed:** `main` at `c0f9de33ea59286fbdac4d9691e5db8695924042`  
+**Last reviewed:** 2026-11-15  
+**Repository state observed:** working tree completing TASK-0014 on `main`  
 **Task ID convention:** No prior task IDs or taskboard were found. This board starts the repository-local sequence at `TASK-0001`; future tasks continue it.
 
 ## Project Implementation Overview
@@ -27,10 +27,22 @@ This board records implementation evidence only. Architecture documents, includi
 | OpenCode agent bridge | `src/adapters/opencode.adapter.ts`; `test/adapters.test.ts` | Implemented and contract-tested |
 | End-to-end task orchestration | `src/orchestration/orchestration.service.ts`; `test/orchestration.test.ts` | Implemented and deterministically tested |
 | Durable execution/audit lifecycle | `src/persistence/execution.persistence.ts` plus orchestration status updates | Partial / unverified |
-| Frontend API contract | `docs/api/openapi.yaml`; `test/contract.test.ts` | Baseline approved; HTTP handlers pending |
-| Production operations and deployment | No deployment/runbook implementation found | Missing |
+| Frontend API contract | `docs/api/openapi.yaml`; `test/contract.test.ts` | Baseline approved; HTTP handlers implemented |
+| Local frontend serving and CORS | `src/api/http-server.ts`; `test/static-serving.test.ts`; `docs/project/LOCAL_DEVELOPMENT.md` | Implemented and verified |
+| Production operations and deployment | Local runbook present; broader deployment target still unspecified | Partial |
 
 ## Priority Backlog
+
+### [TASK-0014] Local deployment and frontend-backend integration
+
+- **Description:** Make the browser frontend connect to the local PSEE runtime with configurable API addressing and documented same-origin/CORS options.
+- **Priority:** High
+- **Status:** DONE
+- **Dependencies:** TASK-0010, TASK-0011, TASK-0013
+- **Acceptance Criteria:** API base configuration, browser request routing, CORS handling, local runbook, and deterministic configuration coverage are implemented; a full live browser deployment is not claimed without a static server verification. **Met:** same-origin `/api` default, meta-configured API base, opt-in `PSEE_CORS_ORIGIN`, runtime static serving of `frontend/` with traversal protection, local runbook, and deterministic tests for config/CORS/static serving.
+- **Progress:** 100%
+- **Related Docs:** `frontend/src/api-client.ts`, `frontend/index.html`, `src/api/http-server.ts`, `src/runtime/bootstrap.ts`, `docs/project/LOCAL_DEVELOPMENT.md`, `test/frontend-config.test.ts`, `test/static-serving.test.ts`, `test/http-api.test.ts`
+- **Notes:** `npm start` serves the dashboard from `PSEE_STATIC_ROOT` (default `frontend`) at `/` while preserving `/api` routes. Browser UAT remains operator-dependent and is not claimed.
 
 ### [TASK-0013] PSEE frontend application
 
@@ -219,15 +231,21 @@ These are implementation dependencies based on observed code boundaries, not new
 
 ## Recently Completed Tasks
 
+- **TASK-0014** — Local frontend-backend integration; same-origin static serving, CORS opt-in, API base config, and local runbook completed.
+- **TASK-0013** — Native TypeScript orchestration dashboard completed.
+- **TASK-0012** — Production API integration and runtime readiness tests completed.
+- **TASK-0011** — Production runtime CLI entrypoint completed.
+- **TASK-0010** — Production HTTP server bootstrap completed.
+- **TASK-0009** — HTTP API handlers for the orchestration contract completed.
 - **TASK-0001** — Automated adapter contract coverage; deterministic provider/process tests completed.
 - **TASK-0003** — Execution persistence and audit service boundary; typed lifecycle persistence completed.
 - **TASK-0005** — Policy and registry edge-case coverage; five deterministic edge-case tests completed.
 
 ## Next Recommended Tasks
 
-1. Add recovery and durable idempotency semantics.
-2. Build the frontend against `docs/api/openapi.yaml`.
-3. Add deployment/runbook verification for the configured runtime.
+1. Finalize remaining TASK-0002 lifecycle gaps (recovery, persistence/checkpoint failure handling, invalid transitions).
+2. Add recovery and checkpoint failure-path coverage (TASK-0006).
+3. Add broader deployment/runbook verification only after a deployment target is specified (TASK-0008).
 
 ## Agent Handoff Notes
 

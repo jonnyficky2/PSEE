@@ -12,7 +12,7 @@
     "dev:frontend": "tsc -p tsconfig.frontend.json --watch",
     "start": "tsx src/runtime/cli.ts",
     "spike:adapters": "tsx src/scripts/verify-adapters.ts",
-    "test": "tsx --test test/system.test.ts test/adapters.test.ts test/persistence.test.ts test/policy-registry.test.ts test/orchestration.test.ts test/contract.test.ts test/http-api.test.ts test/bootstrap.test.ts test/cli.test.ts test/runtime-integration.test.ts"
+    "test": "tsx --test test/system.test.ts test/adapters.test.ts test/persistence.test.ts test/policy-registry.test.ts test/orchestration.test.ts test/contract.test.ts test/http-api.test.ts test/bootstrap.test.ts test/cli.test.ts test/runtime-integration.test.ts test/frontend-config.test.ts test/static-serving.test.ts"
   },
   "keywords": [
     "multi-agent",

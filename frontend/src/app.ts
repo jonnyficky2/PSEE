@@ -1,6 +1,5 @@
 import { ApiError, PseeApiClient } from './api-client.js';
 import { DATA_SENSITIVITIES, TASK_ROLES, type CreateTaskRequest, type TaskResponse } from './types.js';
-import './styles.css';
 
 const api = new PseeApiClient();
 const root = document.querySelector<HTMLDivElement>('#app');

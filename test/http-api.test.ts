@@ -34,4 +34,20 @@ describe('orchestration HTTP API', () => {
   test('returns policy rejection', async () => { const rejected = { ...service, execute: async () => ({ taskId: 'x', executionId: 'e', correlationId: 'c', status: 'REJECTED' as const, error: { code: 'POLICY_REJECTED', message: 'blocked' } }) }; const server = createOrchestrationHttpServer(rejected).listen(0); await new Promise<void>((r) => server.once('listening', () => r())); const port = (server.address() as any).port; const response = await new Promise<any>((r) => { const req = request({ port, method: 'POST', path: '/api/tasks', headers: { 'content-type': 'application/json' } }, (res) => { let d=''; res.on('data', c=>d+=c); res.on('end',()=>r({status:res.statusCode,body:JSON.parse(d)})); }); req.end(JSON.stringify({taskId:'x',title:'x',role:'coder',instructions:'x'})); }); server.close(); assert.equal(response.status, 422); });
   test('looks up task and handles missing task', async () => { const found = await call('GET', '/api/tasks?taskId=task-1'); const missing = await call('GET', '/api/tasks?taskId=missing'); assert.equal(found.status, 200); assert.equal(missing.status, 404); });
   test('cancels task and handles duplicate idempotency key', async () => { const cancelled = await call('POST', '/api/tasks/task-1/cancel'); const duplicate = await call('POST', '/api/tasks', { taskId: 'task-1', title: 'Test', role: 'coder', instructions: 'run' }, { 'idempotency-key': 'idem-1' }); assert.equal(cancelled.status, 202); assert.equal(duplicate.status, 202); });
+
+  test('emits CORS headers only when PSEE_CORS_ORIGIN is configured', async () => {
+    const previous = process.env.PSEE_CORS_ORIGIN;
+    process.env.PSEE_CORS_ORIGIN = 'http://localhost:8080';
+    try {
+      const response = await call('OPTIONS', '/api/tasks');
+      assert.equal(response.status, 204);
+      assert.equal(response.headers['access-control-allow-origin'], 'http://localhost:8080');
+      assert.match(String(response.headers['access-control-allow-methods']), /GET/);
+    } finally {
+      if (previous === undefined) delete process.env.PSEE_CORS_ORIGIN;
+      else process.env.PSEE_CORS_ORIGIN = previous;
+    }
+    const without = await call('GET', '/api/tasks?taskId=task-1');
+    assert.equal(without.headers['access-control-allow-origin'], undefined);
+  });
 });

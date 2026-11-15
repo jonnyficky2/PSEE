@@ -8,13 +8,19 @@ import { GitWorktreeManager } from '../isolation/worktree.manager.js';
 import { CheckpointEngine } from '../checkpoint/checkpoint.engine.js';
 import { createOrchestrationHttpServer, adaptOrchestrationService } from '../api/http-server.js';
 
-export interface RuntimeConfig { host: string; port: number; dbPath: string; }
+export interface RuntimeConfig { host: string; port: number; dbPath: string; staticRoot?: string; }
 export type RuntimeEnvironment = Record<string, string | undefined>;
 
 export function createRuntimeConfig(env: RuntimeEnvironment = process.env): RuntimeConfig {
   const port = env.PSEE_PORT === undefined ? 3000 : Number(env.PSEE_PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PSEE_PORT must be an integer between 1 and 65535');
-  return { host: env.PSEE_HOST || '127.0.0.1', port, dbPath: env.PSEE_DB_PATH || '.psee/psee_state.sqlite' };
+  const staticRoot = env.PSEE_STATIC_ROOT === undefined ? 'frontend' : env.PSEE_STATIC_ROOT.trim();
+  return {
+    host: env.PSEE_HOST || '127.0.0.1',
+    port,
+    dbPath: env.PSEE_DB_PATH || '.psee/psee_state.sqlite',
+    ...(staticRoot ? { staticRoot } : {}),
+  };
 }
 
 export interface PseeRuntime { config: RuntimeConfig; server: Server; database: PseeDatabase; close(): Promise<void>; }
@@ -45,7 +51,7 @@ export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrid
     createWorktree: overrides.worktree ?? ((taskId) => worktrees.createWorktree(taskId)),
     saveCheckpoint: (data) => checkpoints.saveCheckpoint(data),
   });
-  const server = createOrchestrationHttpServer(adaptOrchestrationService(service));
+  const server = createOrchestrationHttpServer(adaptOrchestrationService(service), { staticRoot: config.staticRoot });
   let closed = false;
   return {
     config, server, database,

@@ -4,7 +4,12 @@ import { createRuntimeConfig, createPseeRuntime } from '../src/runtime/bootstrap
 
 test('runtime configuration uses safe defaults and environment overrides', () => {
   const config = createRuntimeConfig({ PSEE_HOST: '127.0.0.1', PSEE_PORT: '4310', PSEE_DB_PATH: '.tmp/state.sqlite' });
-  assert.deepStrictEqual(config, { host: '127.0.0.1', port: 4310, dbPath: '.tmp/state.sqlite' });
+  assert.deepStrictEqual(config, { host: '127.0.0.1', port: 4310, dbPath: '.tmp/state.sqlite', staticRoot: 'frontend' });
+});
+
+test('runtime can disable static frontend serving', () => {
+  const config = createRuntimeConfig({ PSEE_STATIC_ROOT: '' });
+  assert.equal(config.staticRoot, undefined);
 });
 
 test('runtime rejects invalid port configuration', () => {
