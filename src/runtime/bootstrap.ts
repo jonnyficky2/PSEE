@@ -1,3 +1,4 @@
+import { ModelRegistryService } from '../registry/model.registry.js';
 import { createServer, type Server } from 'node:http';
 import { PseeDatabase } from '../db/database.js';
 import { ExecutionPersistenceService } from '../persistence/execution.persistence.js';
@@ -23,11 +24,12 @@ export function createRuntimeConfig(env: RuntimeEnvironment = process.env): Runt
   };
 }
 
-export interface PseeRuntime { config: RuntimeConfig; server: Server; database: PseeDatabase; close(): Promise<void>; }
+export interface PseeRuntime { config: RuntimeConfig; server: Server; database: PseeDatabase; modelRegistry: ModelRegistryService; close(): Promise<void>; }
 
 export interface RuntimeOverrides {
   adapter?: import('../types/index.js').AgentAdapter;
   worktree?: (taskId: string) => Promise<{ worktreePath: string; branchName: string; baseSha: string }>;
+  modelRegistry?: ModelRegistryService;
 }
 
 export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrides: RuntimeOverrides = {}): PseeRuntime {
@@ -40,6 +42,7 @@ export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrid
     .run('ollama', 'ollama', 'Ollama', 'local', 'ACTIVE');
   database.rawDb.prepare(`INSERT OR IGNORE INTO ai_models (id, provider_id, model_key, display_name, status, source) VALUES (?, ?, ?, ?, ?, ?)`)
     .run('runtime-local', 'ollama', 'runtime-local', 'Runtime local model', 'QUALIFIED', 'verified');
+  const modelRegistry = overrides.modelRegistry ?? new ModelRegistryService(database);
   const policy = new FreeFirstPolicyEngine();
   const worktrees = new GitWorktreeManager();
   const checkpoints = new CheckpointEngine(database);
@@ -47,6 +50,7 @@ export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrid
   const service = new OrchestrationService({
     persistence,
     adapter,
+    modelRegistry,
     selectRoute: (request) => policy.selectRoute({ ...request, allowPaid: false }),
     createWorktree: overrides.worktree ?? ((taskId) => worktrees.createWorktree(taskId)),
     saveCheckpoint: (data) => checkpoints.saveCheckpoint(data),
@@ -54,7 +58,7 @@ export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrid
   const server = createOrchestrationHttpServer(adaptOrchestrationService(service), { staticRoot: config.staticRoot });
   let closed = false;
   return {
-    config, server, database,
+    config, server, database, modelRegistry,
     close: () => new Promise<void>((resolve, reject) => {
       if (closed) return resolve();
       closed = true;

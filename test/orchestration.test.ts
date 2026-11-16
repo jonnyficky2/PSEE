@@ -4,6 +4,7 @@ import { rmSync } from 'node:fs';
 import { PseeDatabase } from '../src/db/database.js';
 import { ExecutionPersistenceService } from '../src/persistence/execution.persistence.js';
 import { OrchestrationService } from '../src/orchestration/orchestration.service.js';
+import { ModelRegistryService } from '../src/registry/model.registry.js';
 import type { AgentAdapter, TaskExecutionContext, TaskExecutionResult } from '../src/types/index.js';
 
 describe('Orchestration service', () => {
@@ -150,5 +151,100 @@ describe('Orchestration service', () => {
     assert.equal(result.status, 'FAILED');
     assert.equal(result.error.code, 'ADAPTER_FAILED');
     assert.equal(checkpointed, false);
+  });
+
+  test('orchestration obtains candidates from ModelRegistryService and ignores client overrides', async () => {
+    const modelRegistry = new ModelRegistryService(db);
+    modelRegistry.registerProvider('p-gw', 'gw', 'Gateway', 'gateway');
+    modelRegistry.registerModel({
+      id: 'backend-gw-model', providerId: 'p-gw', modelKey: 'backend-gw-model', displayName: 'BGW',
+      status: 'QUALIFIED', contextWindow: null, maxOutputTokens: null, enabled: true, source: 'verified',
+    });
+
+    let receivedCandidates: any = null;
+    const adapter: AgentAdapter = {
+      id: 'fake-agent', name: 'Fake', version: '1',
+      isAvailable: async () => true, healthCheck: async () => ({ healthy: true, details: 'ok' }),
+      executeTask: async (context) => ({ taskId: context.taskId, runId: context.runId, status: 'SUCCESS', exitCode: 0, modifiedFiles: [], stdout: '', stderr: '', sanitizedSummary: 'done', durationMs: 1 }),
+      abortTask: async () => {},
+    };
+    const service = new OrchestrationService({
+      persistence, adapter, modelRegistry,
+      selectRoute: (req) => {
+        receivedCandidates = { local: req.availableLocalModels, gateway: req.availableGatewayModels };
+        return { providerId: 'p-gw', modelId: 'backend-gw-model', tier: 'TIER_1_GATEWAY', reason: 'test' };
+      },
+      createWorktree: async () => ({ worktreePath: '/tmp/t', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => {},
+    });
+
+    const result = await service.execute({
+      taskId: 'task-registry', title: 'Registry test', role: 'researcher', instructions: 'run',
+      availableLocalModels: ['malicious-client-local'], availableGatewayModels: ['malicious-client-gw'],
+      createdBy: 'test',
+    });
+
+    assert.equal(result.status, 'SUCCESS');
+    assert.deepStrictEqual(receivedCandidates, {
+      local: ['model-1'],
+      gateway: ['backend-gw-model'],
+    });
+  });
+
+  test('handles empty registry inventory with POLICY_REJECTED / ROUTING_EXHAUSTED', async () => {
+    const emptyDbPath = '.psee/empty-reg.sqlite';
+    rmSync(emptyDbPath, { force: true });
+    const emptyDb = new PseeDatabase({ dbPath: emptyDbPath });
+    const emptyPersistence = new ExecutionPersistenceService(emptyDb);
+    const modelRegistry = new ModelRegistryService(emptyDb);
+
+    const service = new OrchestrationService({
+      persistence: emptyPersistence,
+      adapter: { executeTask: async () => ({}) } as any,
+      modelRegistry,
+      selectRoute: (req) => {
+        if (req.availableLocalModels.length === 0 && req.availableGatewayModels.length === 0) {
+          throw new Error('ROUTING_EXHAUSTED: No free models available');
+        }
+        return { providerId: 'p', modelId: 'm', tier: 'TIER_0_LOCAL', reason: 'ok' };
+      },
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => {},
+    });
+
+    const result = await service.execute({
+      taskId: 'task-empty', title: 'Empty', role: 'researcher', instructions: 'run', createdBy: 'test',
+    });
+
+    assert.equal(result.status, 'REJECTED');
+    assert.equal(result.error.code, 'POLICY_REJECTED');
+    assert.match(result.error.message, /ROUTING_EXHAUSTED/);
+
+    emptyDb.close();
+    rmSync(emptyDbPath, { force: true });
+  });
+
+  test('handles registry/database errors as REGISTRY_ERROR operational failures', async () => {
+    const failingRegistry = {
+      getCandidateModels: () => { throw new Error('Database disk I/O error'); },
+    } as any;
+
+    const service = new OrchestrationService({
+      persistence,
+      adapter: { executeTask: async () => ({}) } as any,
+      modelRegistry: failingRegistry,
+      selectRoute: () => ({ providerId: 'p', modelId: 'm', tier: 'TIER_0_LOCAL', reason: 'ok' }),
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => {},
+    });
+
+    const result = await service.execute({
+      taskId: 'task-reg-err', title: 'Err', role: 'researcher', instructions: 'run', createdBy: 'test',
+    });
+
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.error.code, 'REGISTRY_ERROR');
+    assert.match(result.error.message, /Database disk I\/O error/);
+    assert.equal(persistence.getTask('task-reg-err')?.status, 'FAILED');
   });
 });

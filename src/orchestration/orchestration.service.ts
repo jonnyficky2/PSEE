@@ -1,3 +1,4 @@
+import type { ModelRegistryService } from '../registry/model.registry.js';
 import type { CheckpointData, CheckpointEngine } from '../checkpoint/checkpoint.engine.js';
 import type { AgentAdapter, AgentRole, TaskExecutionContext } from '../types/index.js';
 import type { ExecutionPersistenceService } from '../persistence/execution.persistence.js';
@@ -11,8 +12,8 @@ export interface OrchestrationRequest {
   role: AgentRole;
   instructions: string;
   dataSensitivity?: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'SECRET';
-  availableLocalModels: string[];
-  availableGatewayModels: string[];
+  availableLocalModels?: string[];
+  availableGatewayModels?: string[];
   createdBy: string;
   timeoutMs?: number;
   worktreePath?: string;
@@ -34,6 +35,7 @@ export interface OrchestrationDependencies {
   selectRoute: (request: Pick<OrchestrationRequest, 'taskId' | 'role' | 'dataSensitivity' | 'availableLocalModels' | 'availableGatewayModels'>) => RouteSelection;
   createWorktree: (taskId: string) => Promise<{ worktreePath: string; branchName: string; baseSha: string }>;
   saveCheckpoint: (data: CheckpointData) => void;
+  modelRegistry?: ModelRegistryService;
 }
 
 export class OrchestrationService {
@@ -55,9 +57,31 @@ export class OrchestrationService {
       createdBy: request.createdBy,
     });
 
+    let availableLocalModels: string[] = request.availableLocalModels ?? [];
+    let availableGatewayModels: string[] = request.availableGatewayModels ?? [];
+
+    if (this.deps.modelRegistry) {
+      try {
+        const candidates = this.deps.modelRegistry.getCandidateModels();
+        availableLocalModels = candidates.local;
+        availableGatewayModels = candidates.gateway;
+      } catch (error) {
+        this.deps.persistence.updateTaskStatus(request.taskId, 'FAILED');
+        const result = this.failure(request.taskId, executionId, correlationId, 'REGISTRY_ERROR', error);
+        if (request.idempotencyKey) this.idempotentResults.set(request.idempotencyKey, result);
+        return result;
+      }
+    }
+
     let route: RouteSelection;
     try {
-      route = this.deps.selectRoute(request);
+      route = this.deps.selectRoute({
+        taskId: request.taskId,
+        role: request.role,
+        dataSensitivity: request.dataSensitivity,
+        availableLocalModels,
+        availableGatewayModels,
+      });
     } catch (error) {
       this.deps.persistence.updateTaskStatus(request.taskId, 'FAILED');
       const result = this.failure(request.taskId, executionId, correlationId, 'POLICY_REJECTED', error);

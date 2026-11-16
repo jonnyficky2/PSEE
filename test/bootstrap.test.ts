@@ -20,5 +20,8 @@ test('runtime rejects invalid port configuration', () => {
 test('runtime creates a server and closes database cleanly', async () => {
   const runtime = createPseeRuntime({ PSEE_DB_PATH: '.tmp/bootstrap-test.sqlite', PSEE_PORT: '3001' });
   assert.ok(runtime.server);
+  assert.ok(runtime.modelRegistry);
+  const candidates = runtime.modelRegistry.getCandidateModels();
+  assert.deepStrictEqual(candidates.local, ['runtime-local']);
   await runtime.close();
 });

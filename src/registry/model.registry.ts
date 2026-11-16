@@ -14,7 +14,44 @@ export interface ModelEntity {
 }
 
 export class ModelRegistryService {
+  private candidateCache: { local: string[]; gateway: string[] } | null = null;
+
   constructor(private readonly pseeDb: PseeDatabase) {}
+
+  private invalidateCache(): void {
+    this.candidateCache = null;
+  }
+
+  getCandidateModels(): { local: string[]; gateway: string[] } {
+    if (this.candidateCache) {
+      return { local: [...this.candidateCache.local], gateway: [...this.candidateCache.gateway] };
+    }
+
+    const db = this.pseeDb.rawDb;
+    const stmt = db.prepare(`
+      SELECT m.model_key, p.provider_type
+      FROM ai_models m
+      JOIN ai_providers p ON m.provider_id = p.id
+      WHERE m.status IN ('CONNECTIVITY_VERIFIED', 'QUALIFIED')
+        AND m.enabled = 1
+        AND p.status = 'ACTIVE'
+    `);
+
+    const rows = stmt.all() as Array<{ model_key: string; provider_type: string }>;
+    const local: string[] = [];
+    const gateway: string[] = [];
+
+    for (const row of rows) {
+      if (row.provider_type === 'local') {
+        local.push(row.model_key);
+      } else if (row.provider_type === 'gateway' || row.provider_type === 'cloud') {
+        gateway.push(row.model_key);
+      }
+    }
+
+    this.candidateCache = { local, gateway };
+    return { local: [...local], gateway: [...gateway] };
+  }
 
   registerProvider(
     id: string,
@@ -23,6 +60,7 @@ export class ModelRegistryService {
     providerType: 'cloud' | 'local' | 'gateway',
     status: string = 'ACTIVE'
   ): void {
+    this.invalidateCache();
     const db = this.pseeDb.rawDb;
     const stmt = db.prepare(`
       INSERT INTO ai_providers (id, provider_key, display_name, provider_type, status, updated_at)
@@ -37,6 +75,7 @@ export class ModelRegistryService {
   }
 
   registerModel(model: ModelEntity): void {
+    this.invalidateCache();
     const db = this.pseeDb.rawDb;
     const stmt = db.prepare(`
       INSERT INTO ai_models (

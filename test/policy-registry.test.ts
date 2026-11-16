@@ -89,4 +89,124 @@ describe('Policy and registry edge cases', () => {
       rmSync(`${dbPath}-shm`, { force: true });
     }
   });
+
+  test('discovers candidates partitioned by tier and excludes invalid states', () => {
+    const dbPath = '.psee/policy-registry-candidates-test.sqlite';
+    rmSync(dbPath, { force: true });
+    const db = new PseeDatabase({ dbPath });
+    const registry = new ModelRegistryService(db);
+    try {
+      registry.registerProvider('p-local', 'local-provider', 'Local', 'local');
+      registry.registerProvider('p-gateway', 'gateway-provider', 'Gateway', 'gateway');
+
+      registry.registerModel({
+        id: 'm1', providerId: 'p-local', modelKey: 'local-verified', displayName: 'LV',
+        status: 'CONNECTIVITY_VERIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+      registry.registerModel({
+        id: 'm2', providerId: 'p-gateway', modelKey: 'gateway-qualified', displayName: 'GQ',
+        status: 'QUALIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+      registry.registerModel({
+        id: 'm3', providerId: 'p-local', modelKey: 'local-quarantined', displayName: 'LQ',
+        status: 'QUARANTINED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+      registry.registerModel({
+        id: 'm4', providerId: 'p-gateway', modelKey: 'gateway-disabled', displayName: 'GD',
+        status: 'QUALIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: false, source: 'verified',
+      });
+
+      const candidates = registry.getCandidateModels();
+      assert.deepStrictEqual(candidates.local, ['local-verified']);
+      assert.deepStrictEqual(candidates.gateway, ['gateway-qualified']);
+    } finally {
+      db.close();
+      rmSync(dbPath, { force: true });
+      rmSync(`${dbPath}-wal`, { force: true });
+      rmSync(`${dbPath}-shm`, { force: true });
+    }
+  });
+
+  test('synchronously invalidates snapshot cache upon model or provider mutation', () => {
+    const dbPath = '.psee/policy-registry-cache-invalidation-test.sqlite';
+    rmSync(dbPath, { force: true });
+    const db = new PseeDatabase({ dbPath });
+    const registry = new ModelRegistryService(db);
+    try {
+      registry.registerProvider('p-local', 'local-provider', 'Local', 'local');
+      registry.registerModel({
+        id: 'm1', providerId: 'p-local', modelKey: 'model-a', displayName: 'MA',
+        status: 'QUALIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+
+      let candidates = registry.getCandidateModels();
+      assert.deepStrictEqual(candidates.local, ['model-a']);
+
+      // Mutate by registering another model
+      registry.registerModel({
+        id: 'm2', providerId: 'p-local', modelKey: 'model-b', displayName: 'MB',
+        status: 'CONNECTIVITY_VERIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+
+      candidates = registry.getCandidateModels();
+      assert.deepStrictEqual(candidates.local, ['model-a', 'model-b']);
+
+      // Mutate provider status to INACTIVE
+      registry.registerProvider('p-local', 'local-provider', 'Local', 'local', 'INACTIVE');
+
+      candidates = registry.getCandidateModels();
+      assert.deepStrictEqual(candidates.local, []);
+    } finally {
+      db.close();
+      rmSync(dbPath, { force: true });
+      rmSync(`${dbPath}-wal`, { force: true });
+      rmSync(`${dbPath}-shm`, { force: true });
+    }
+  });
+
+  test('excludes models with unknown provider types by enforcing check constraint', () => {
+    const dbPath = '.psee/policy-registry-unknown-type-test.sqlite';
+    rmSync(dbPath, { force: true });
+    const db = new PseeDatabase({ dbPath });
+    const registry = new ModelRegistryService(db);
+    try {
+      assert.throws(
+        () => registry.registerProvider('p-unknown', 'unknown-provider', 'Unknown', 'custom-type' as any),
+        /CHECK constraint failed/
+      );
+    } finally {
+      db.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
+
+  test('returned candidate snapshot is immutable and does not affect cache', () => {
+    const dbPath = '.psee/policy-registry-immutability-test.sqlite';
+    rmSync(dbPath, { force: true });
+    const db = new PseeDatabase({ dbPath });
+    const registry = new ModelRegistryService(db);
+    try {
+      registry.registerProvider('p1', 'p1', 'P1', 'local');
+      registry.registerModel({
+        id: 'm1', providerId: 'p1', modelKey: 'model-a', displayName: 'MA',
+        status: 'QUALIFIED', contextWindow: null, maxOutputTokens: null,
+        enabled: true, source: 'verified',
+      });
+
+      const candidates = registry.getCandidateModels();
+      candidates.local.push('malicious-injection');
+
+      const secondCall = registry.getCandidateModels();
+      assert.deepStrictEqual(secondCall.local, ['model-a']);
+    } finally {
+      db.close();
+      rmSync(dbPath, { force: true });
+    }
+  });
 });
