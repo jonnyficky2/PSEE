@@ -33,6 +33,7 @@ export type ModelLifecycleState =
   | 'QUARANTINED'
   | 'DISABLED';
 
+export * from './adapter-errors.js';
 export interface TaskExecutionContext {
   taskId: string;
   runId: string;
