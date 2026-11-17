@@ -4,6 +4,7 @@ import type {
   TaskExecutionContext,
   TaskExecutionResult,
 } from '../types/index.js';
+import { sanitize } from '../types/adapter-errors.js';
 
 export interface OpenCodeAdapterOptions {
   binaryPath?: string;
@@ -84,9 +85,10 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
 
       const timeout = setTimeout(() => {
         child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
+        const escalation = setTimeout(() => {
+          child.kill('SIGKILL');
         }, 3000);
+        child.on('close', () => clearTimeout(escalation));
       }, context.timeoutMs || 120000);
 
       child.stdout?.on('data', (data) => {
@@ -99,22 +101,25 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
 
       child.on('error', (err) => {
         clearTimeout(timeout);
+        if (!this.activeProcesses.has(context.runId)) return;
         this.activeProcesses.delete(context.runId);
+        const sanitizedErr = sanitize(err.message);
         resolve({
           taskId: context.taskId,
           runId: context.runId,
           status: 'FAILED',
           exitCode: -1,
           modifiedFiles: [],
-          stdout: stdoutBuffer,
-          stderr: `${stderrBuffer}\nProcess spawn error: ${err.message}`,
-          sanitizedSummary: `Execution failed: ${err.message}`,
+          stdout: sanitize(stdoutBuffer),
+          stderr: sanitize(`${stderrBuffer}\nProcess spawn error: ${sanitizedErr}`),
+          sanitizedSummary: sanitize(`Execution failed: ${sanitizedErr}`),
           durationMs: Date.now() - startTime,
         });
       });
 
       child.on('close', (code, signal) => {
         clearTimeout(timeout);
+        if (!this.activeProcesses.has(context.runId)) return;
         this.activeProcesses.delete(context.runId);
 
         const durationMs = Date.now() - startTime;
@@ -142,9 +147,9 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
           status,
           exitCode: code ?? (signal ? 137 : 1),
           modifiedFiles: [...new Set(modifiedFiles)],
-          stdout: stdoutBuffer,
-          stderr: stderrBuffer,
-          sanitizedSummary: `Task ${context.taskId} completed with status ${status} in ${durationMs}ms`,
+          stdout: sanitize(stdoutBuffer),
+          stderr: sanitize(stderrBuffer),
+          sanitizedSummary: sanitize(`Task ${context.taskId} completed with status ${status} in ${durationMs}ms`),
           durationMs,
         });
       });
@@ -152,9 +157,9 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
   }
 
   async abortTask(runId: string): Promise<void> {
-    const process = this.activeProcesses.get(runId);
-    if (process) {
-      process.kill('SIGTERM');
+    const child = this.activeProcesses.get(runId);
+    if (child) {
+      child.kill('SIGTERM');
       this.activeProcesses.delete(runId);
     }
   }

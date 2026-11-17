@@ -3,6 +3,7 @@ import type {
   NormalizedRequest,
   NormalizedResponse,
 } from '../types/index.js';
+import { sanitize, AdapterError, AdapterFailure } from '../types/adapter-errors.js';
 
 export interface OllamaAdapterOptions {
   baseUrl?: string;
@@ -81,8 +82,14 @@ export class OllamaLocalAdapter implements ModelAdapter {
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Ollama chat completion failed (${res.status}): ${errText}`);
+        const errText = sanitize(await res.text());
+        let failure = AdapterFailure.UNKNOWN;
+        if (res.status === 401 || res.status === 403) failure = AdapterFailure.AUTH_FAILED;
+        else if (res.status === 429) failure = AdapterFailure.RATE_LIMITED;
+        else if (res.status === 402) failure = AdapterFailure.CREDITS_REQUIRED;
+        else if (res.status >= 500) failure = AdapterFailure.SERVER_ERROR;
+
+        throw new AdapterError(failure, `Ollama chat completion failed (${res.status}): ${errText}`);
       }
 
       const json = (await res.json()) as {
@@ -99,7 +106,7 @@ export class OllamaLocalAdapter implements ModelAdapter {
 
       const choice = json.choices?.[0];
       if (typeof choice?.message?.content !== 'string') {
-        throw new Error('Malformed Ollama response: missing choices[0].message.content');
+        throw new AdapterError(AdapterFailure.MALFORMED_RESPONSE, 'Malformed Ollama response: missing choices[0].message.content');
       }
       const content = choice.message.content;
       const finishReason = (choice.finish_reason as 'stop' | 'length') || 'stop';
@@ -118,10 +125,11 @@ export class OllamaLocalAdapter implements ModelAdapter {
         latencyMs: Date.now() - startTime,
       };
     } catch (err: unknown) {
+      if (err instanceof AdapterError) throw err;
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(`Ollama request timed out after ${request.timeoutMs}ms`);
+        throw new AdapterError(AdapterFailure.TIMEOUT, `Ollama request timed out after ${request.timeoutMs}ms`);
       }
-      throw err;
+      throw new AdapterError(AdapterFailure.UNKNOWN, `Ollama request failed: ${sanitize(err instanceof Error ? err.message : String(err))}`, err);
     } finally {
       clearTimeout(timeout);
     }

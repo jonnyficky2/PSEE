@@ -3,6 +3,7 @@ import type {
   NormalizedRequest,
   NormalizedResponse,
 } from '../types/index.js';
+import { sanitize, AdapterError, AdapterFailure } from '../types/adapter-errors.js';
 
 export interface NineRouterAdapterOptions {
   baseUrl?: string;
@@ -100,14 +101,20 @@ export class NineRouterGatewayAdapter implements ModelAdapter {
       });
 
       if (!res.ok) {
-        const errText = await res.text();
+        const errText = sanitize(await res.text());
         if (res.status === 429) {
-          throw new Error(`RATE_LIMITED: 9Router returned 429 for ${model}: ${errText}`);
+          throw new AdapterError(AdapterFailure.RATE_LIMITED, `RATE_LIMITED: 9Router returned 429 for ${model}: ${errText}`);
         }
         if (res.status === 402) {
-          throw new Error(`CREDITS_REQUIRED: Model ${model} requires paid credits: ${errText}`);
+          throw new AdapterError(AdapterFailure.CREDITS_REQUIRED, `CREDITS_REQUIRED: Model ${model} requires paid credits: ${errText}`);
         }
-        throw new Error(`9Router chat completion failed (${res.status}): ${errText}`);
+        if (res.status === 401 || res.status === 403) {
+          throw new AdapterError(AdapterFailure.AUTH_FAILED, `AUTH_FAILED: 9Router authentication failed (${res.status}): ${errText}`);
+        }
+        if (res.status >= 500) {
+          throw new AdapterError(AdapterFailure.SERVER_ERROR, `SERVER_ERROR: 9Router server error (${res.status}): ${errText}`);
+        }
+        throw new AdapterError(AdapterFailure.UNKNOWN, `9Router chat completion failed (${res.status}): ${errText}`);
       }
 
       const json = (await res.json()) as {
@@ -124,7 +131,7 @@ export class NineRouterGatewayAdapter implements ModelAdapter {
 
       const choice = json.choices?.[0];
       if (typeof choice?.message?.content !== 'string') {
-        throw new Error('Malformed 9Router response: missing choices[0].message.content');
+        throw new AdapterError(AdapterFailure.MALFORMED_RESPONSE, 'Malformed 9Router response: missing choices[0].message.content');
       }
       const content = choice.message.content;
       const finishReason = (choice.finish_reason as 'stop' | 'length') || 'stop';
@@ -143,10 +150,11 @@ export class NineRouterGatewayAdapter implements ModelAdapter {
         latencyMs: Date.now() - startTime,
       };
     } catch (err: unknown) {
+      if (err instanceof AdapterError) throw err;
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(`9Router request timed out after ${request.timeoutMs}ms`);
+        throw new AdapterError(AdapterFailure.TIMEOUT, `9Router request timed out after ${request.timeoutMs}ms`);
       }
-      throw err;
+      throw new AdapterError(AdapterFailure.UNKNOWN, `9Router request failed: ${sanitize(err instanceof Error ? err.message : String(err))}`, err);
     } finally {
       clearTimeout(timeout);
     }
