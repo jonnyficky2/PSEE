@@ -38,8 +38,18 @@ export function createOrchestrationHttpServer(service: OrchestrationHttpService,
         const body = await readJson(req);
         if (!isTaskRequest(body)) return sendError(res, 400, 'INVALID_REQUEST', 'Invalid task request', correlationId);
         const task = body as Record<string, unknown>;
-        const result = await service.execute({ ...task as any, createdBy: typeof task.createdBy === 'string' ? task.createdBy : 'api', availableLocalModels: Array.isArray(task.availableLocalModels) ? task.availableLocalModels as string[] : [], availableGatewayModels: Array.isArray(task.availableGatewayModels) ? task.availableGatewayModels as string[] : [], correlationId, idempotencyKey: req.headers['idempotency-key']?.toString() });
-        return sendResult(res, result.status === 'REJECTED' ? 422 : 202, result, correlationId);
+        const result = await service.execute({
+          taskId: task.taskId as string,
+          title: task.title as string,
+          role: task.role as any,
+          instructions: task.instructions as string,
+          dataSensitivity: task.dataSensitivity as any,
+          createdBy: typeof task.createdBy === 'string' ? task.createdBy : 'api',
+          correlationId,
+          idempotencyKey: req.headers['idempotency-key']?.toString(),
+        });
+        const httpStatus = result.status === 'REJECTED' || result.error?.code === 'POLICY_REJECTED' ? 422 : result.error?.code === 'REGISTRY_ERROR' ? 503 : 202;
+        return sendResult(res, httpStatus, result, correlationId);
       }
       if (req.method === 'GET' && url.pathname === '/api/tasks') {
         const taskId = url.searchParams.get('taskId');
@@ -83,7 +93,14 @@ async function serveStatic(res: ServerResponse, staticRoot: string, pathname: st
 }
 
 function readJson(req: IncomingMessage): Promise<unknown> { return new Promise((resolve, reject) => { let data = ''; req.on('data', (chunk) => { data += chunk; if (data.length > 1_000_000) reject(new Error('Request body too large')); }); req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { reject(new Error('Malformed JSON')); } }); req.on('error', reject); }); }
-function isTaskRequest(value: any): boolean { return value && typeof value.taskId === 'string' && value.taskId.length > 0 && typeof value.title === 'string' && value.title.length > 0 && ['planner','architect','researcher','coder','tester','reviewer','docs'].includes(value.role) && typeof value.instructions === 'string' && value.instructions.length > 0; }
+function isTaskRequest(value: any): boolean {
+  return value &&
+    typeof value.taskId === 'string' && value.taskId.length > 0 &&
+    typeof value.title === 'string' && value.title.length > 0 &&
+    ['planner','architect','researcher','coder','tester','reviewer','docs'].includes(value.role) &&
+    typeof value.instructions === 'string' && value.instructions.length > 0 &&
+    (!value.dataSensitivity || ['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'SECRET'].includes(value.dataSensitivity));
+}
 function corsHeaders(): Record<string, string> {
   const origin = process.env.PSEE_CORS_ORIGIN;
   if (!origin) return {};

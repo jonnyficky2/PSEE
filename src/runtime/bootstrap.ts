@@ -51,7 +51,12 @@ export function createPseeRuntime(env: RuntimeEnvironment = process.env, overrid
     persistence,
     adapter,
     modelRegistry,
-    selectRoute: (request) => policy.selectRoute({ ...request, allowPaid: false }),
+    selectRoute: (request) => policy.selectRoute({
+      ...request,
+      availableLocalModels: request.availableLocalModels ?? [],
+      availableGatewayModels: request.availableGatewayModels ?? [],
+      allowPaid: false
+    }),
     createWorktree: overrides.worktree ?? ((taskId) => worktrees.createWorktree(taskId)),
     saveCheckpoint: (data) => checkpoints.saveCheckpoint(data),
   });

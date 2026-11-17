@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request } from 'node:http';
 import { rmSync } from 'node:fs';
+import { PseeDatabase } from '../src/db/database.js';
 import { createPseeRuntime } from '../src/runtime/bootstrap.js';
 import type { AgentAdapter, TaskExecutionContext } from '../src/types/index.js';
 
@@ -27,13 +28,26 @@ test('production runtime serves the complete deterministic HTTP lifecycle', asyn
   await new Promise<void>((resolve) => runtime.server.listen(0, '127.0.0.1', () => resolve()));
   const port = (runtime.server.address() as any).port;
   try {
-    const submission = await http(port, 'POST', '/api/tasks', { taskId: 'integration-1', title: 'Test', role: 'coder', instructions: 'run', availableLocalModels: ['runtime-local'] }, { 'x-correlation-id': 'corr-integration', 'idempotency-key': 'idem-integration' });
+    const submission = await http(port, 'POST', '/api/tasks', { taskId: 'integration-1', title: 'Test', role: 'coder', instructions: 'run' }, { 'x-correlation-id': 'corr-integration', 'idempotency-key': 'idem-integration' });
     assert.equal(submission.status, 202); assert.equal(submission.body.correlationId, 'corr-integration');
-    const replay = await http(port, 'POST', '/api/tasks', { taskId: 'integration-1', title: 'Test', role: 'coder', instructions: 'run', availableLocalModels: ['runtime-local'] }, { 'idempotency-key': 'idem-integration' });
+    const replay = await http(port, 'POST', '/api/tasks', { taskId: 'integration-1', title: 'Test', role: 'coder', instructions: 'run' }, { 'idempotency-key': 'idem-integration' });
     assert.equal(replay.body.executionId, submission.body.executionId);
     const status = await http(port, 'GET', '/api/tasks?taskId=integration-1'); assert.equal(status.status, 200); assert.equal(status.body.status, 'DONE');
     const invalid = await http(port, 'POST', '/api/tasks', { taskId: '' }); assert.equal(invalid.status, 400);
     const missing = await http(port, 'GET', '/api/tasks?taskId=missing'); assert.equal(missing.status, 404);
   } finally { await runtime.close(); }
   assert.equal(runtime.database.rawDb.open, false);
+});
+
+test('production runtime rejects tasks when registry has no qualified models', async () => {
+  rmSync('.tmp/runtime-empty.sqlite', { force: true });
+  const runtime = createPseeRuntime({ PSEE_DB_PATH: '.tmp/runtime-empty.sqlite', PSEE_PORT: '3013' }, { adapter: adapter() });
+  runtime.database.rawDb.prepare("UPDATE ai_models SET status = 'DISABLED'").run();
+  await new Promise<void>((resolve) => runtime.server.listen(0, '127.0.0.1', () => resolve()));
+  const port = (runtime.server.address() as any).port;
+  try {
+    const submission = await http(port, 'POST', '/api/tasks', { taskId: 'empty-1', title: 'Empty', role: 'coder', instructions: 'run' });
+    assert.equal(submission.status, 422);
+    assert.equal(submission.body.error.code, 'POLICY_REJECTED');
+  } finally { await runtime.close(); }
 });

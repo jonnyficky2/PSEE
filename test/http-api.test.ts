@@ -26,12 +26,27 @@ describe('orchestration HTTP API', () => {
     return response;
   }
 
-  test('accepts valid submission and preserves headers', async () => {
+  test('accepts valid submission without models and preserves headers', async () => {
     const response = await call('POST', '/api/tasks', { taskId: 'task-1', title: 'Test', role: 'coder', instructions: 'run' }, { 'x-correlation-id': 'corr-client', 'idempotency-key': 'idem-1' });
     assert.equal(response.status, 202); assert.equal(response.body.correlationId, 'corr-client'); assert.equal(response.headers['x-correlation-id'], 'corr-client');
   });
+
+  test('rejects unsupported dataSensitivity values', async () => {
+    const response = await call('POST', '/api/tasks', {
+      taskId: 'task-bad-sensitivity',
+      title: 'Bad Sensitivity',
+      role: 'coder',
+      instructions: 'run',
+      dataSensitivity: 'MALICIOUS'
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'INVALID_REQUEST');
+  });
+
   test('rejects invalid body', async () => { const response = await call('POST', '/api/tasks', { taskId: '' }); assert.equal(response.status, 400); assert.equal(response.body.error.code, 'INVALID_REQUEST'); });
-  test('returns policy rejection', async () => { const rejected = { ...service, execute: async () => ({ taskId: 'x', executionId: 'e', correlationId: 'c', status: 'REJECTED' as const, error: { code: 'POLICY_REJECTED', message: 'blocked' } }) }; const server = createOrchestrationHttpServer(rejected).listen(0); await new Promise<void>((r) => server.once('listening', () => r())); const port = (server.address() as any).port; const response = await new Promise<any>((r) => { const req = request({ port, method: 'POST', path: '/api/tasks', headers: { 'content-type': 'application/json' } }, (res) => { let d=''; res.on('data', c=>d+=c); res.on('end',()=>r({status:res.statusCode,body:JSON.parse(d)})); }); req.end(JSON.stringify({taskId:'x',title:'x',role:'coder',instructions:'x'})); }); server.close(); assert.equal(response.status, 422); });
+  test('returns policy rejection as 422', async () => { const rejected = { ...service, execute: async () => ({ taskId: 'x', executionId: 'e', correlationId: 'c', status: 'REJECTED' as const, error: { code: 'POLICY_REJECTED', message: 'blocked' } }) }; const server = createOrchestrationHttpServer(rejected).listen(0); await new Promise<void>((r) => server.once('listening', () => r())); const port = (server.address() as any).port; const response = await new Promise<any>((r) => { const req = request({ port, method: 'POST', path: '/api/tasks', headers: { 'content-type': 'application/json' } }, (res) => { let d=''; res.on('data', c=>d+=c); res.on('end',()=>r({status:res.statusCode,body:JSON.parse(d)})); }); req.end(JSON.stringify({taskId:'x',title:'x',role:'coder',instructions:'x'})); }); server.close(); assert.equal(response.status, 422); });
+
+  test('returns REGISTRY_ERROR as 503', async () => { const registryErr = { ...service, execute: async () => ({ taskId: 'x', executionId: 'e', correlationId: 'c', status: 'FAILED' as const, error: { code: 'REGISTRY_ERROR', message: 'db fail' } }) }; const server = createOrchestrationHttpServer(registryErr).listen(0); await new Promise<void>((r) => server.once('listening', () => r())); const port = (server.address() as any).port; const response = await new Promise<any>((r) => { const req = request({ port, method: 'POST', path: '/api/tasks', headers: { 'content-type': 'application/json' } }, (res) => { let d=''; res.on('data', c=>d+=c); res.on('end',()=>r({status:res.statusCode,body:JSON.parse(d)})); }); req.end(JSON.stringify({taskId:'x',title:'x',role:'coder',instructions:'x'})); }); server.close(); assert.equal(response.status, 503); });
   test('looks up task and handles missing task', async () => { const found = await call('GET', '/api/tasks?taskId=task-1'); const missing = await call('GET', '/api/tasks?taskId=missing'); assert.equal(found.status, 200); assert.equal(missing.status, 404); });
   test('cancels task and handles duplicate idempotency key', async () => { const cancelled = await call('POST', '/api/tasks/task-1/cancel'); const duplicate = await call('POST', '/api/tasks', { taskId: 'task-1', title: 'Test', role: 'coder', instructions: 'run' }, { 'idempotency-key': 'idem-1' }); assert.equal(cancelled.status, 202); assert.equal(duplicate.status, 202); });
 
