@@ -2,13 +2,14 @@
 
 **Canonical path:** `docs/project/TASK_BOARD.md`  
 **Purpose:** Primary operational source for implementation backlog, dependencies, progress, verification, and agent handoff.  
-**Last reviewed:** 2026-11-15  
-**Repository state observed:** working tree completing TASK-0014 on `main`  
+**Last reviewed:** 2026-11-18
+
+**Repository state observed:** `main` at `f0927df` with uncommitted Phase 4 changes (adapter, tests, this board, and the TASK-0004 plan)
 **Task ID convention:** No prior task IDs or taskboard were found. This board starts the repository-local sequence at `TASK-0001`; future tasks continue it.
 
 ## Project Implementation Overview
 
-PSEE is currently a TypeScript 0.1.0 package for free-first multi-agent orchestration. The repository has working, directly tested foundations for SQLite state, model registration, free-first routing, checkpoints, and isolated Git worktrees. Provider/model adapters exist for Ollama, 9Router, and OpenCode, but their network/process contracts are not covered by automated tests. There is no discovered end-to-end orchestration service that connects task execution, policy selection, adapter execution, persistence, and recovery.
+PSEE is currently a TypeScript 0.1.0 package for free-first multi-agent orchestration. The repository has working, directly tested foundations for SQLite state, model registration, free-first routing, checkpoints, isolated Git worktrees, and end-to-end task orchestration. Provider/model adapters exist for Ollama, 9Router, and OpenCode with classified error normalization and sanitized output. Adapter lifecycle hardening (TASK-0004) is complete and operator-approved; the OpenCode abort path has guarded exactly-once settlement and SIGTERM→SIGKILL escalation with deterministic test coverage.
 
 This board records implementation evidence only. Architecture documents, including the canonical decision register, constrain future work but do not establish implementation completion.
 
@@ -22,9 +23,9 @@ This board records implementation evidence only. Architecture documents, includi
 | Free-first routing | `src/policy/policy.engine.ts`; system test 3 passed | Implemented and verified for covered cases |
 | Checkpoint persistence | `src/checkpoint/checkpoint.engine.ts`; system test 4 passed | Implemented and verified for covered case |
 | Git worktree isolation | `src/isolation/worktree.manager.ts`; system test 5 passed | Implemented and verified for covered case |
-| Ollama adapter | `src/adapters/ollama.adapter.ts`; `test/adapters.test.ts` | Implemented and contract-tested |
-| 9Router adapter | `src/adapters/ninerouter.adapter.ts`; `test/adapters.test.ts` | Implemented and contract-tested |
-| OpenCode agent bridge | `src/adapters/opencode.adapter.ts`; `test/adapters.test.ts` | Implemented and contract-tested |
+| Ollama adapter | `src/adapters/ollama.adapter.ts`; `test/adapters.test.ts` | Implemented, contract-tested, error-normalized (TASK-0004) |
+| 9Router adapter | `src/adapters/ninerouter.adapter.ts`; `test/adapters.test.ts` | Implemented, contract-tested, error-normalized (TASK-0004) |
+| OpenCode agent bridge | `src/adapters/opencode.adapter.ts`; `test/adapters.test.ts` | Implemented, contract-tested, hardened and verified (TASK-0004 DONE) |
 | End-to-end task orchestration | `src/orchestration/orchestration.service.ts`; `test/orchestration.test.ts` | Implemented and deterministically tested |
 | Durable execution/audit lifecycle | `src/persistence/execution.persistence.ts` plus orchestration status updates | Partial / unverified |
 | Frontend API contract | `docs/api/openapi.yaml`; `test/contract.test.ts` | Baseline approved; HTTP handlers implemented |
@@ -141,12 +142,31 @@ This board records implementation evidence only. Architecture documents, includi
 
 - **Description:** After contract tests identify behavior gaps, make provider and process adapters consistently classify timeout, availability, non-OK response, and malformed response failures without leaking secrets.
 - **Priority:** High
-- **Status:** BLOCKED
+- **Status:** DONE — implementation and test evidence complete; operator-approved closeout on 2026-11-18.
 - **Dependencies:** TASK-0001
-- **Acceptance Criteria:** All adapter failure classes have stable, tested behavior and sanitized error details.
-- **Progress:** 0%
-- **Related Docs:** `src/adapters/*.ts`, `src/types/index.ts`, `FREE_TIER_PROVIDER_POLICY.md`
-- **Notes:** Do not pre-implement fixes without failing contract evidence.
+- **Acceptance Criteria:**
+  - All adapter failure classes have stable, tested behavior and sanitized error details. **Met (Phases 1–2).**
+  - OpenCode timeout path escalates from SIGTERM to SIGKILL with bounded cleanup. **Met — genuine SIGTERM-resistant fixture asserts signal order and ≥2800ms grace.**
+  - OpenCode `abortTask` does not leave `executeTask` promises unresolved. **Met (Phase 4a; abort settles the promise).**
+  - OpenCode `abortTask` escalates to SIGKILL if the process survives SIGTERM. **Met — committed test asserts SIGTERM then SIGKILL, process termination, and empty maps; mutation check confirmed failure when SIGKILL is removed.**
+  - Exactly-once promise settlement across error/close/abort/timeout races. **Met — dedicated tests for abort→close, error→close, timeout→abort, abort→timeout, abort-after-exit, repeated abort.**
+  - A deterministic test covers the real adapter's abort→close→settlement path. **Met (real `OpenCodeBridgeAdapter` with signal spy).**
+  - Assertions explicitly verify SIGTERM and SIGKILL delivery. **Met (`ChildProcess.prototype.kill` spy + SIGTERM marker file).**
+  - `npm test` and `npm run build` pass after remediation. **Met (65/65 tests, 20/20 adapter tests, 4/4 sanitization tests, build succeeded).**
+- **Progress:** 100%
+- **Related Docs:** `src/types/adapter-errors.ts`, `src/adapters/ollama.adapter.ts`, `src/adapters/ninerouter.adapter.ts`, `src/adapters/opencode.adapter.ts`, `test/adapters.test.ts`, `test/sanitization.test.ts`, `docs/project/plans/TASK-0004-IMPLEMENTATION-PLAN.md`
+- **Implementation Commits:** `7a89e1f` (error classification foundation), `f0927df` (adapter normalization and OpenCode hardening). Phase 4 changes are uncommitted on `main`.
+- **Resolved Defects:** D1 (premature `activeProcesses` deletion) and D2 (missing abort escalation) are fixed. `settle()` is the single terminal path; timers are cleared; both maps are cleaned up exactly once.
+- **Test-Evidence Remediation (2026-11-18):**
+  - Prior false-positive `trap "" TERM` escalation tests were replaced with a Node.js SIGTERM-resistant fixture (readiness file, SIGTERM marker file, stays alive until SIGKILL) and a `ChildProcess.prototype.kill` spy.
+  - Fixtures are SIGKILLed in `afterEach` and temp dirs removed — no orphan processes.
+  - Escalation test asserts SIGTERM delivered first, SIGKILL after ≥2800ms, process dead, promise unsettled during grace, and both maps empty. A separate test confirms no delayed SIGKILL after early exit.
+  - Mutation check: removing `child.kill('SIGKILL')` made the escalation test fail; source restored and verified.
+- **Known Limitations:**
+  - Detached subprocess lifecycle is not independently managed. SIGTERM/SIGKILL may not reach grandchild processes.
+  - Sanitization covers Bearer tokens and `sk-`/`ag-` key patterns only. Other vendor key formats may appear in output.
+  - Live-provider and multi-user/network soak testing have not been performed (deferred to TASK-0007).
+- **Notes:** All acceptance criteria are demonstrably satisfied. Formally approved and closed by the operator on 2026-11-18.
 
 ### [TASK-0005] Add policy and registry edge-case coverage
 
@@ -196,10 +216,9 @@ This board records implementation evidence only. Architecture documents, includi
 
 1. **TASK-0002** — finalize and implement the orchestration service now that adapter, persistence, policy, and registry seams are tested.
 2. **TASK-0006** — recovery-path coverage alongside orchestration design.
-3. **TASK-0004** — only if further integration evidence identifies adapter lifecycle/error gaps.
-4. **TASK-0004** — only if further integration evidence identifies adapter lifecycle/error gaps.
-5. **TASK-0007** — environment verification after deterministic adapter behavior is established.
-6. **TASK-0008** — operational readiness after runtime wiring exists.
+3. **TASK-0004** — complete Phase 4 remediation (D1, D2, abort test, verification).
+4. **TASK-0007** — environment verification after deterministic adapter behavior is established.
+5. **TASK-0008** — operational readiness after runtime wiring exists.
 
 These are implementation dependencies based on observed code boundaries, not new architecture approvals.
 
@@ -208,23 +227,25 @@ These are implementation dependencies based on observed code boundaries, not new
 | Task | Reason |
 |---|---|
 | TASK-0002 | Orchestration API and persistence seam are not yet defined; implementation would be speculative. |
-| TASK-0004 | Requires concrete failures or gaps from adapter contract tests. |
 | TASK-0007 | Depends on deterministic adapter behavior and environment-specific verification boundaries. |
 | TASK-0008 | Deployment target and runnable operational surface are not specified. |
 
 ## Testing and Verification Status
 
-### Verified in this working tree
+### Verified in this working tree (2026-11-18, final remediation pass)
 
-- `npm test` — 12 tests passed, 0 failed.
-- `npm run build` — TypeScript compilation passed.
-- `git diff --check` — passed.
-- The suite covers database initialization, registry registration, two policy routes, checkpoint save/read, worktree create/list/remove, adapter normalization, HTTP failure classification, malformed responses, and timeout outcomes.
+- `npx tsx --test test/adapters.test.ts` — **20 tests passed, 0 failed** (two consecutive runs; real SIGTERM-resistant escalation and race tests included).
+- `npx tsx --test test/sanitization.test.ts` — **4 tests passed, 0 failed** (this file is not in the `npm test` script's file list).
+- `npm test` — **65 tests passed, 0 failed** (6 suites).
+- `npm run build` — succeeded (TypeScript backend + frontend, no errors).
+- `git diff --check` — clean.
+- Mutation check: removing `child.kill('SIGKILL')` from the adapter caused the escalation test to fail; source restored and verified.
+- The suite covers database initialization, registry registration, policy routes, checkpoint save/read, worktree create/list/remove, adapter normalization, HTTP failure classification, malformed responses, timeout outcomes, sanitization, spawn errors, abort settlement, signal-ordered SIGTERM→SIGKILL escalation, no-delayed-SIGKILL, error/close and timeout/abort races, clean shutdown, orchestration, HTTP API, runtime integration, frontend config, static serving, and CLI entrypoint.
 
 ### Not yet verified
 
 - Live provider availability and real service response compatibility; deterministic contract tests do not replace environment verification.
-- End-to-end orchestration.
+- Multi-user / network soak testing (deferred to TASK-0007).
 - Durable execution and audit lifecycle service behavior.
 - Deployment and operational readiness.
 - Manual UAT; none is claimed.
@@ -244,8 +265,8 @@ These are implementation dependencies based on observed code boundaries, not new
 ## Next Recommended Tasks
 
 1. Finalize remaining TASK-0002 lifecycle gaps (recovery, persistence/checkpoint failure handling, invalid transitions).
-2. Add recovery and checkpoint failure-path coverage (TASK-0006).
-3. Add broader deployment/runbook verification only after a deployment target is specified (TASK-0008).
+3. Add recovery and checkpoint failure-path coverage (TASK-0006).
+4. Add broader deployment/runbook verification only after a deployment target is specified (TASK-0008).
 
 ## Agent Handoff Notes
 

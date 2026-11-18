@@ -19,6 +19,7 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
   private readonly binaryPath: string;
   private readonly defaultModel: string;
   private readonly activeProcesses = new Map<string, ChildProcess>();
+  private readonly abortHandlers = new Map<string, () => void>();
 
   constructor(options: OpenCodeAdapterOptions = {}) {
     this.binaryPath = options.binaryPath || 'opencode';
@@ -60,6 +61,9 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
     const startTime = Date.now();
     let stdoutBuffer = '';
     let stderrBuffer = '';
+    let settled = false;
+    let escalating = false;
+    let escalationTimer: ReturnType<typeof setTimeout> | undefined;
 
     const args = [
       'run',
@@ -83,12 +87,31 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
 
       this.activeProcesses.set(context.runId, child);
 
-      const timeout = setTimeout(() => {
+      // Shared cleanup: clears all timers, removes from activeProcesses, resolves once.
+      const settle = (result: TaskExecutionResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (escalationTimer !== undefined) clearTimeout(escalationTimer);
+        this.activeProcesses.delete(context.runId);
+        this.abortHandlers.delete(context.runId);
+        resolve(result);
+      };
+
+      // Start escalation: SIGTERM now, SIGKILL after 3s grace. Guarded so that
+      // timeout and abort races start at most one escalation timer.
+      const startEscalation = (): void => {
+        if (escalating) return;
+        escalating = true;
         child.kill('SIGTERM');
-        const escalation = setTimeout(() => {
+        escalationTimer = setTimeout(() => {
           child.kill('SIGKILL');
         }, 3000);
-        child.on('close', () => clearTimeout(escalation));
+      };
+      this.abortHandlers.set(context.runId, startEscalation);
+
+      const timeout = setTimeout(() => {
+        startEscalation();
       }, context.timeoutMs || 120000);
 
       child.stdout?.on('data', (data) => {
@@ -100,11 +123,8 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
       });
 
       child.on('error', (err) => {
-        clearTimeout(timeout);
-        if (!this.activeProcesses.has(context.runId)) return;
-        this.activeProcesses.delete(context.runId);
         const sanitizedErr = sanitize(err.message);
-        resolve({
+        settle({
           taskId: context.taskId,
           runId: context.runId,
           status: 'FAILED',
@@ -118,10 +138,6 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
       });
 
       child.on('close', (code, signal) => {
-        clearTimeout(timeout);
-        if (!this.activeProcesses.has(context.runId)) return;
-        this.activeProcesses.delete(context.runId);
-
         const durationMs = Date.now() - startTime;
         let status: TaskExecutionResult['status'] = 'SUCCESS';
 
@@ -141,7 +157,7 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
           }
         }
 
-        resolve({
+        settle({
           taskId: context.taskId,
           runId: context.runId,
           status,
@@ -157,10 +173,9 @@ export class OpenCodeBridgeAdapter implements AgentAdapter {
   }
 
   async abortTask(runId: string): Promise<void> {
-    const child = this.activeProcesses.get(runId);
-    if (child) {
-      child.kill('SIGTERM');
-      this.activeProcesses.delete(runId);
-    }
+    // Do not delete from activeProcesses here — the close/error handler settles
+    // the promise. Trigger the same guarded escalation path used by the timeout.
+    const startEscalation = this.abortHandlers.get(runId);
+    if (startEscalation) startEscalation();
   }
 }
