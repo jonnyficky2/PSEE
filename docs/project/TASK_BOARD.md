@@ -120,12 +120,12 @@ This board records implementation evidence only. Architecture documents, includi
 
 - **Description:** Connect task creation, model/policy selection, adapter execution, execution result persistence, correlation IDs, and checkpoint handoff behind one explicit service API.
 - **Priority:** Critical
-- **Status:** IN_PROGRESS
+- **Status:** DONE
 - **Dependencies:** TASK-0001, TASK-0003
-- **Acceptance Criteria:** Core service and deterministic tests are implemented; canonical frontend contract exists; remaining lifecycle handlers are explicit before completion.
-- **Progress:** 88%
+- **Acceptance Criteria:** Core service and deterministic tests are implemented; canonical frontend contract exists; checkpoint failure handling, recovery execution semantics (`resume`), and invalid state transition enforcement are fully implemented and verified.
+- **Progress:** 100%
 - **Related Docs:** `src/orchestration/orchestration.service.ts`, `test/orchestration.test.ts`, `docs/api/openapi.yaml`, `src/persistence/execution.persistence.ts`
-- **Notes:** Successful, policy-rejected, adapter-failure, timeout/interrupt classification, safe cancellation through `abortTask`, persistence updates, correlation IDs, worktree handoff, checkpoint handoff, and in-process idempotency replay are implemented. Remaining: HTTP handlers, recovery execution semantics, persistence/checkpoint failure handling, invalid transition enforcement, and broader contract validation.
+- **Notes:** Successful, policy-rejected, adapter-failure, timeout/interrupt classification, safe cancellation through `abortTask`, persistence updates, correlation IDs, worktree handoff, checkpoint handoff, in-process idempotency replay, checkpoint persistence failure handling (`CHECKPOINT_ERROR`), invalid state transition enforcement (`INVALID_STATE`), and checkpoint-based recovery execution (`resume`) are fully implemented and deterministically tested.
 
 ### [TASK-0003] Add execution persistence and audit service boundaries
 
@@ -183,12 +183,12 @@ This board records implementation evidence only. Architecture documents, includi
 
 - **Description:** Test missing tasks, checkpoint replacement, malformed serialized checkpoint data, dirty-worktree metadata, and recovery handoff boundaries.
 - **Priority:** Medium
-- **Status:** READY
+- **Status:** DONE
 - **Dependencies:** None
 - **Acceptance Criteria:** Failure and replacement semantics are explicit and tested without claiming Git checkpoints are chain-of-custody evidence.
-- **Progress:** 0%
+- **Progress:** 100%
 - **Related Docs:** `src/checkpoint/checkpoint.engine.ts`, `src/db/database.ts`, `AI_AGENT_ACCEPTANCE_TESTS.md`
-- **Notes:** Current coverage verifies only one successful save/read path.
+- **Notes:** Dedicated checkpoint coverage in `test/checkpoint.test.ts` for missing tasks, replacement, and malformed data. Recovery handoff boundaries verified in `test/orchestration.test.ts`.
 
 ### [TASK-0007] Add integration verification for configured providers and OpenCode bridge
 
@@ -214,11 +214,10 @@ This board records implementation evidence only. Architecture documents, includi
 
 ## Dependency-Aware Execution Order
 
-1. **TASK-0002** — finalize and implement the orchestration service now that adapter, persistence, policy, and registry seams are tested.
-2. **TASK-0006** — recovery-path coverage alongside orchestration design.
-3. **TASK-0004** — complete Phase 4 remediation (D1, D2, abort test, verification).
-4. **TASK-0007** — environment verification after deterministic adapter behavior is established.
-5. **TASK-0008** — operational readiness after runtime wiring exists.
+1. **TASK-0006** — recovery-path coverage alongside orchestration design.
+2. **TASK-0004** — complete Phase 4 remediation (D1, D2, abort test, verification).
+3. **TASK-0007** — environment verification after deterministic adapter behavior is established.
+4. **TASK-0008** — operational readiness after runtime wiring exists.
 
 These are implementation dependencies based on observed code boundaries, not new architecture approvals.
 
@@ -226,7 +225,6 @@ These are implementation dependencies based on observed code boundaries, not new
 
 | Task | Reason |
 |---|---|
-| TASK-0002 | Orchestration API and persistence seam are not yet defined; implementation would be speculative. |
 | TASK-0007 | Depends on deterministic adapter behavior and environment-specific verification boundaries. |
 | TASK-0008 | Deployment target and runnable operational surface are not specified. |
 
@@ -264,9 +262,8 @@ These are implementation dependencies based on observed code boundaries, not new
 
 ## Next Recommended Tasks
 
-1. Finalize remaining TASK-0002 lifecycle gaps (recovery, persistence/checkpoint failure handling, invalid transitions).
-3. Add recovery and checkpoint failure-path coverage (TASK-0006).
-4. Add broader deployment/runbook verification only after a deployment target is specified (TASK-0008).
+1. Add recovery and checkpoint failure-path coverage (TASK-0006).
+2. Add broader deployment/runbook verification only after a deployment target is specified (TASK-0008).
 
 ## Agent Handoff Notes
 
