@@ -36,6 +36,7 @@ export interface OrchestrationDependencies {
   createWorktree: (taskId: string) => Promise<{ worktreePath: string; branchName: string; baseSha: string }>;
   saveCheckpoint: (data: CheckpointData) => void;
   modelRegistry?: ModelRegistryService;
+  checkpointEngine?: CheckpointEngine;
 }
 
 export class OrchestrationService {
@@ -45,11 +46,19 @@ export class OrchestrationService {
   constructor(private readonly deps: OrchestrationDependencies) {}
 
   async execute(request: OrchestrationRequest): Promise<OrchestrationResult> {
+    const correlationId = request.correlationId ?? `corr-${request.taskId}-${Date.now()}`;
     if (request.idempotencyKey) {
       const existing = this.idempotentResults.get(request.idempotencyKey);
       if (existing) return existing;
     }
-    const correlationId = request.correlationId ?? `corr-${request.taskId}-${Date.now()}`;
+    const existing = this.deps.persistence.getTask(request.taskId);
+    if (existing) {
+      if (existing.status === 'RUNNING' || this.activeRuns.has(request.taskId)) {
+        return this.failure(request.taskId, '', correlationId, 'INVALID_STATE', `Task ${request.taskId} is already active`);
+      }
+      return this.failure(request.taskId, '', correlationId, 'INVALID_STATE', `Task ${request.taskId} already exists with status ${existing.status}`);
+    }
+
     const executionId = `execution-${request.taskId}-${Date.now()}`;
     this.deps.persistence.createTask({
       id: request.taskId, title: request.title, status: 'QUEUED', priority: 0,
@@ -134,19 +143,109 @@ export class OrchestrationService {
 
     this.deps.persistence.updateExecutionStatus(executionId, 'SUCCESS');
     this.deps.persistence.updateTaskStatus(request.taskId, 'DONE');
-    this.deps.saveCheckpoint({
-      taskId: request.taskId, executionId, checkpointNumber: 1,
-      workspaceRef: worktree.worktreePath, gitBranch: worktree.branchName,
-      gitCommitSha: worktree.baseSha, completedSteps: ['execute'], pendingSteps: [],
-      changedFiles: execution.modifiedFiles,
-      testSummary: { status: 'not-run-by-orchestrator' },
-    });
+    try {
+      this.deps.saveCheckpoint({
+        taskId: request.taskId, executionId, checkpointNumber: 1,
+        workspaceRef: worktree.worktreePath, gitBranch: worktree.branchName,
+        gitCommitSha: worktree.baseSha, completedSteps: ['execute'], pendingSteps: [],
+        changedFiles: execution.modifiedFiles,
+        testSummary: { status: 'not-run-by-orchestrator' },
+      });
+    } catch (error) {
+      this.deps.persistence.updateExecutionStatus(executionId, 'FAILED', 'CHECKPOINT_ERROR');
+      this.deps.persistence.updateTaskStatus(request.taskId, 'FAILED');
+      const result = this.failure(request.taskId, executionId, correlationId, 'CHECKPOINT_ERROR', error);
+      if (request.idempotencyKey) this.idempotentResults.set(request.idempotencyKey, result);
+      return result;
+    }
     const result = { taskId: request.taskId, executionId, correlationId, status: 'SUCCESS' as const };
     if (request.idempotencyKey) this.idempotentResults.set(request.idempotencyKey, result);
     return result;
   }
 
   getTask(taskId: string) { return this.deps.persistence.getTask(taskId); }
+
+  async resume(taskId: string): Promise<OrchestrationResult> {
+    const task = this.deps.persistence.getTask(taskId);
+    if (!task) {
+      return { taskId, executionId: '', correlationId: `corr-${taskId}`, status: 'FAILED', error: { code: 'NOT_FOUND', message: 'Task not found' } };
+    }
+    if (this.activeRuns.has(taskId) || task.status === 'RUNNING') {
+      return { taskId, executionId: '', correlationId: `corr-${taskId}`, status: 'FAILED', error: { code: 'INVALID_STATE', message: 'Task is already running' } };
+    }
+    if (!this.deps.checkpointEngine) {
+      return { taskId, executionId: '', correlationId: `corr-${taskId}`, status: 'FAILED', error: { code: 'RECOVERY_UNAVAILABLE', message: 'Checkpoint engine not configured for recovery' } };
+    }
+    const checkpoint = this.deps.checkpointEngine.getLatestCheckpoint(taskId);
+    if (!checkpoint) {
+      return { taskId, executionId: '', correlationId: `corr-${taskId}`, status: 'FAILED', error: { code: 'NO_CHECKPOINT', message: `No checkpoint found for task ${taskId}` } };
+    }
+
+    const correlationId = `corr-resume-${taskId}-${Date.now()}`;
+    const executionId = `execution-resume-${taskId}-${Date.now()}`;
+
+    this.deps.persistence.startExecution({
+      id: executionId, taskId, agentId: this.deps.adapter.id,
+      runNumber: checkpoint.checkpointNumber + 1, status: 'RUNNING',
+      correlationId,
+    });
+    this.deps.persistence.updateTaskStatus(taskId, 'RUNNING');
+
+    const run = { executionId, cancelled: false };
+    this.activeRuns.set(taskId, run);
+
+    const context: TaskExecutionContext = {
+      taskId, runId: executionId, role: 'coder',
+      worktreePath: checkpoint.workspaceRef,
+      instructions: `Resume task execution from checkpoint ${checkpoint.checkpointNumber}`,
+      contextFiles: checkpoint.changedFiles ?? [],
+      timeoutMs: 120000,
+      allowNetwork: true,
+    };
+
+    let execution;
+    try {
+      execution = await this.deps.adapter.executeTask(context);
+    } catch (error) {
+      this.activeRuns.delete(taskId);
+      this.deps.persistence.updateExecutionStatus(executionId, 'FAILED', 'ADAPTER_EXCEPTION');
+      this.deps.persistence.updateTaskStatus(taskId, 'FAILED');
+      return this.failure(taskId, executionId, correlationId, 'ADAPTER_EXCEPTION', error);
+    }
+
+    this.activeRuns.delete(taskId);
+    if (run.cancelled) {
+      this.deps.persistence.updateExecutionStatus(executionId, 'INTERRUPTED', 'CANCELLED');
+      this.deps.persistence.updateTaskStatus(taskId, 'CANCELLED');
+      return this.failure(taskId, executionId, correlationId, 'CANCELLED', 'Task cancellation requested');
+    }
+
+    if (execution.status !== 'SUCCESS') {
+      const code = execution.status === 'TIMEOUT' ? 'TIMEOUT' : execution.status === 'INTERRUPTED' ? 'INTERRUPTED' : 'ADAPTER_FAILED';
+      this.deps.persistence.updateExecutionStatus(executionId, execution.status, code);
+      this.deps.persistence.updateTaskStatus(taskId, execution.status === 'TIMEOUT' ? 'FAILED' : execution.status);
+      return this.failure(taskId, executionId, correlationId, code, execution.stderr || execution.sanitizedSummary);
+    }
+
+    this.deps.persistence.updateExecutionStatus(executionId, 'SUCCESS');
+    this.deps.persistence.updateTaskStatus(taskId, 'DONE');
+    try {
+      this.deps.saveCheckpoint({
+        taskId, executionId, checkpointNumber: checkpoint.checkpointNumber + 1,
+        workspaceRef: checkpoint.workspaceRef, gitBranch: checkpoint.gitBranch,
+        gitCommitSha: checkpoint.gitCommitSha, completedSteps: [...(checkpoint.completedSteps ?? []), 'resume'],
+        pendingSteps: [],
+        changedFiles: execution.modifiedFiles,
+        testSummary: { status: 'resumed' },
+      });
+    } catch (error) {
+      this.deps.persistence.updateExecutionStatus(executionId, 'FAILED', 'CHECKPOINT_ERROR');
+      this.deps.persistence.updateTaskStatus(taskId, 'FAILED');
+      return this.failure(taskId, executionId, correlationId, 'CHECKPOINT_ERROR', error);
+    }
+
+    return { taskId, executionId, correlationId, status: 'SUCCESS' };
+  }
 
   async cancel(taskId: string): Promise<OrchestrationResult> {
     const run = this.activeRuns.get(taskId);

@@ -247,4 +247,108 @@ describe('Orchestration service', () => {
     assert.match(result.error.message, /Database disk I\/O error/);
     assert.equal(persistence.getTask('task-reg-err')?.status, 'FAILED');
   });
+
+  test('enforces invalid state transitions when attempting to re-execute tasks', async () => {
+    const service = new OrchestrationService({
+      persistence,
+      adapter: { executeTask: async () => ({ status: 'SUCCESS', modifiedFiles: [] }) } as any,
+      selectRoute: () => ({ providerId: 'p', modelId: 'm', tier: 'TIER_0_LOCAL', reason: 'ok' }),
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => {},
+    });
+
+    // Seed task as DONE
+    persistence.createTask({
+      id: 'task-done', title: 'Done task', status: 'DONE', priority: 0,
+      workspaceRef: '/tmp', createdBy: 'test',
+    });
+
+    const result = await service.execute({
+      taskId: 'task-done', title: 'Done again', role: 'coder', instructions: 're-run', createdBy: 'test',
+    });
+
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.error.code, 'INVALID_STATE');
+    assert.match(result.error.message, /already exists with status DONE/);
+  });
+
+  test('handles checkpoint persistence failure gracefully with CHECKPOINT_ERROR', async () => {
+    const service = new OrchestrationService({
+      persistence,
+      adapter: { id: 'fake-agent', executeTask: async () => ({ status: 'SUCCESS', modifiedFiles: [] }) } as any,
+      selectRoute: () => ({ providerId: 'local', modelId: 'model-1', tier: 'TIER_0_LOCAL', reason: 'ok' }),
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => { throw new Error('Disk full'); },
+    });
+
+    const result = await service.execute({
+      taskId: 'task-cp-fail', title: 'CP Fail', role: 'coder', instructions: 'run', createdBy: 'test',
+    });
+
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.error.code, 'CHECKPOINT_ERROR');
+    assert.match(result.error.message, /Disk full/);
+    assert.equal(persistence.getTask('task-cp-fail')?.status, 'FAILED');
+  });
+
+  test('resumes execution from checkpoint successfully', async () => {
+    let resumedContext: any = null;
+    const adapter: AgentAdapter = {
+      id: 'fake-agent', name: 'Fake', version: '1',
+      isAvailable: async () => true, healthCheck: async () => ({ healthy: true, details: 'ok' }),
+      executeTask: async (context) => {
+        resumedContext = context;
+        return { taskId: context.taskId, runId: context.runId, status: 'SUCCESS', exitCode: 0, modifiedFiles: ['resumed.ts'], stdout: '', stderr: '', sanitizedSummary: 'resumed', durationMs: 1 };
+      },
+      abortTask: async () => {},
+    };
+
+    let savedCp: any = null;
+    const checkpointEngine = {
+      getLatestCheckpoint: (taskId: string) => ({
+        taskId, checkpointNumber: 1, workspaceRef: '/tmp/worktree-1',
+        gitBranch: 'task/1', gitCommitSha: 'sha1', completedSteps: ['execute'],
+      }),
+    };
+
+    const service = new OrchestrationService({
+      persistence, adapter, checkpointEngine: checkpointEngine as any,
+      selectRoute: () => ({ providerId: 'p', modelId: 'm', tier: 'TIER_0_LOCAL', reason: 'ok' }),
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: (cp) => { savedCp = cp; },
+    });
+
+    persistence.createTask({
+      id: 'task-resume', title: 'Resume me', status: 'FAILED', priority: 0,
+      workspaceRef: '/tmp/worktree-1', createdBy: 'test',
+    });
+
+    const result = await service.resume('task-resume');
+    assert.equal(result.status, 'SUCCESS');
+    assert.equal(resumedContext.worktreePath, '/tmp/worktree-1');
+    assert.equal(savedCp.checkpointNumber, 2);
+    assert.equal(persistence.getTask('task-resume')?.status, 'DONE');
+  });
+
+  test('resume fails if task or checkpoint does not exist or task is running', async () => {
+    const service = new OrchestrationService({
+      persistence, adapter: {} as any,
+      checkpointEngine: { getLatestCheckpoint: () => null } as any,
+      selectRoute: () => ({ providerId: 'p', modelId: 'm', tier: 'TIER_0_LOCAL', reason: 'ok' }),
+      createWorktree: async () => ({ worktreePath: '/tmp', branchName: 'b', baseSha: 's' }),
+      saveCheckpoint: () => {},
+    });
+
+    const notFound = await service.resume('non-existent');
+    assert.equal(notFound.status, 'FAILED');
+    assert.equal(notFound.error?.code, 'NOT_FOUND');
+
+    persistence.createTask({
+      id: 'task-no-cp', title: 'No CP', status: 'FAILED', priority: 0,
+      workspaceRef: '/tmp', createdBy: 'test',
+    });
+    const noCp = await service.resume('task-no-cp');
+    assert.equal(noCp.status, 'FAILED');
+    assert.equal(noCp.error?.code, 'NO_CHECKPOINT');
+  });
 });
